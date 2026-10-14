@@ -101,6 +101,35 @@ func kimiStateOf(wire string) (kimiState, bool) {
 	return st, err == nil && json.Unmarshal(b, &st) == nil
 }
 
+// kimiIndexWorkDir is the workDir session_index.jsonl names for a session
+// id: Kimi's own index at the root of its home, one record a session, with
+// the session's id, its folder and its working folder. state.json of a
+// session Kimi imported from the Python kimi-cli, or of an early 1.4 one,
+// can carry neither cwd nor workDir, and the index is where Kimi itself
+// keeps those sessions' folder (#2103).
+func kimiIndexWorkDir(id string) string {
+	b, err := os.ReadFile(filepath.Join(KimiCodeDir(), "session_index.jsonl"))
+	if err != nil {
+		return ""
+	}
+	for len(b) > 0 {
+		line := b
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			line, b = b[:i], b[i+1:]
+		} else {
+			b = nil
+		}
+		var rec struct {
+			SessionID string `json:"sessionId"`
+			WorkDir   string `json:"workDir"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.SessionID == id {
+			return rec.WorkDir
+		}
+	}
+	return ""
+}
+
 // names are the user's name for the session and Kimi's own, as Kimi's
 // normalizeSessionTitle tells them apart.
 func (st kimiState) names() (custom, named string) {
@@ -167,6 +196,12 @@ func parseKimi(f file) *state {
 		}
 		if f.main {
 			s.Cwd = cmp.Or(st.Cwd, st.WorkDir)
+			if s.Cwd == "" {
+				// neither field: the index beside sessions/ has the
+				// folder state.json lost (#2103)
+				session := filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(f.path))))
+				s.Cwd = kimiIndexWorkDir(session)
+			}
 			s.Custom, s.Named = st.names()
 			s.Custom, s.Named = title(s.Custom), title(s.Named)
 			s.saw(created, true)

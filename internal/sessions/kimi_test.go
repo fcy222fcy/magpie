@@ -296,3 +296,43 @@ func TestWSLKimiCode(t *testing.T) {
 		t.Fatalf("Kimi's folder in the distro isn't listed: %v", Dirs())
 	}
 }
+
+// state.json of an imported or early-1.4 session can carry neither cwd nor
+// workDir; the index beside sessions/ has the folder for it (#2103).
+func TestKimiCodeSessionFolderFromIndex(t *testing.T) {
+	inZone(t, 0)
+	claude, _ := setup(t)
+	dir := filepath.Join(filepath.Dir(claude), "home", ".kimi-code")
+	kimiSessionsIn(t, dir)
+	line := func(rec map[string]string) string { b, _ := json.Marshal(rec); return string(b) }
+	index := []string{
+		`not json, skipped`,
+		line(map[string]string{"sessionId": kimiJune, "sessionDir": filepath.Join(dir, "sessions", "wd_v14-june-subagent_000000000001", kimiJune), "workDir": "/Users/me/Desktop/test"}),
+		line(map[string]string{"sessionId": "session_absent_from_testdata", "workDir": "/nowhere"}),
+	}
+	if err := os.WriteFile(filepath.Join(dir, "session_index.jsonl"), []byte(strings.Join(index, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ss := List(0)
+	j := find(t, ss, "kimi", kimiJune)
+	if j.Cwd != "/Users/me/Desktop/test" {
+		t.Fatalf("june folder %q, want the index's workDir", j.Cwd)
+	}
+	want := "cd '/Users/me/Desktop/test' && kimi --session " + kimiJune
+	if runtime.GOOS == "windows" {
+		want = "Set-Location -LiteralPath '/Users/me/Desktop/test'; kimi --session " + kimiJune
+	}
+	if j.Resume != want {
+		t.Fatalf("june resume\n got %q\nwant %q", j.Resume, want)
+	}
+	// a session the index has no line for still lists, with no folder
+	o := find(t, ss, "kimi", kimiOld)
+	if o.Cwd != "" {
+		t.Fatalf("migrated folder %q, want none", o.Cwd)
+	}
+	// state.json's own fields still come first
+	e := find(t, ss, "kimi", kimiEarly)
+	if e.Cwd != "/work/kimi" {
+		t.Fatalf("early folder %q, want state.json's cwd", e.Cwd)
+	}
+}
